@@ -1,10 +1,10 @@
+import socket
+import uuid
+import pickle
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
 from Crypto.Cipher import AES
-import socket
-import uuid
 from hashlib import sha512
-
 
 secret_code = 'sca = awesome'
 
@@ -76,5 +76,24 @@ if __name__ == '__main__':
 
             conn.send(len(rsa_enc_sk).to_bytes(2, 'big'))
             conn.send(rsa_enc_sk)
+
+            # ========== EXCHANGE SUB-PROTOCOL ==========
+            enc_po_size = conn.recv(2)
+            enc_po_size = int.from_bytes(enc_po_size, 'big')
+            enc_po = conn.recv(enc_po_size)
+
+            d_enc_pi_size = conn.recv(2)
+            d_enc_pi_size = int.from_bytes(d_enc_pi_size, 'big')
+            d_enc_pi = conn.recv(d_enc_pi_size)
+
+            d_enc_signed_pi_size = conn.recv(2)
+            d_enc_signed_pi_size = int.from_bytes(d_enc_signed_pi_size, 'big')
+            d_enc_signed_pi = conn.recv(d_enc_signed_pi_size)
+
+            m_rsa_enc_sk_size = conn.recv(2)
+            m_rsa_enc_sk_size = int.from_bytes(m_rsa_enc_sk_size, 'big')
+            m_rsa_enc_sk = conn.recv(m_rsa_enc_sk_size)
+
+            # =========================================
         finally:
             conn.close()

@@ -41,7 +41,7 @@ if __name__ == '__main__':
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_address = ('localhost', 2557)
     sock.bind(server_address)
-    print(f'Server started at port 2557, listening...')
+    print('[Server started at port 2557, listening...]')
 
     sock.listen(1)
 
@@ -110,14 +110,13 @@ if __name__ == '__main__':
 
             po = AES.new(sk, AES.MODE_ECB).decrypt(enc_po)
             po = pickle.loads(unpad(po))
-            print(po.amount)
 
             payload = sid + customer_pk + bytes(po.amount)
             hashed_payload = int.from_bytes(sha512(payload).digest(), 'big')
             signed_payload = pow(hashed_payload, own_key.d, own_key.n)
             enc_signed_payload = AES.new(sk, AES.MODE_ECB).encrypt(signed_payload.to_bytes(128, 'big'))
 
-            pg_public_key = import_pg_key().public_key()
+            pg_public_key = import_pg_key().publickey()
             enc_sk = PKCS1_OAEP.new(pg_public_key).encrypt(sk)
 
             pg_sock = establish_connection()
@@ -134,6 +133,39 @@ if __name__ == '__main__':
 
             pg_sock.send(len(enc_sk).to_bytes(2, 'big'))
             pg_sock.send(enc_sk)
+
+            # Phase 5
+            enc_response_size = pg_sock.recv(2)
+            enc_response_size = int.from_bytes(enc_response_size, 'big')
+            enc_response = pg_sock.recv(enc_response_size)
+
+            enc_sid_size = pg_sock.recv(2)
+            enc_sid_size = int.from_bytes(enc_sid_size, 'big')
+            enc_sid = pg_sock.recv(enc_sid_size)
+
+            enc_signed_payload_size = pg_sock.recv(2)
+            enc_signed_payload_size = int.from_bytes(enc_signed_payload_size, 'big')
+            enc_signed_payload = pg_sock.recv(enc_signed_payload_size)
+
+            enc_sk_size = pg_sock.recv(2)
+            enc_sk_size = int.from_bytes(enc_sk_size, 'big')
+            enc_sk = pg_sock.recv(enc_sk_size)
+            sk = PKCS1_OAEP.new(own_key).decrypt(enc_sk)
+
+            # Phase 6
+            enc_sk = PKCS1_OAEP.new(RSA.import_key(customer_pk)).encrypt(sk)
+
+            conn.send(enc_response_size.to_bytes(2, 'big'))
+            conn.send(enc_response)
+
+            conn.send(enc_sid_size.to_bytes(2, 'big'))
+            conn.send(enc_sid)
+
+            conn.send(enc_signed_payload_size.to_bytes(2, 'big'))
+            conn.send(enc_signed_payload)
+
+            conn.send(len(enc_sk).to_bytes(2, 'big'))
+            conn.send(enc_sk)
 
             # =========================================
         finally:

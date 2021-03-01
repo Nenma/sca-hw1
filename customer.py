@@ -43,7 +43,11 @@ def pad(input_bytes):
     return input_bytes + padding
 
 
-def validate_signature(sock):
+def unpad(input_bytes):
+    return input_bytes[:-ord(chr(input_bytes[-1]))]
+
+
+def validate_merchant_signature(sock):
     # receiving confirmation from merchant
     sid_size = sock.recv(2)
     sid_size = int.from_bytes(sid_size, 'big')
@@ -67,9 +71,21 @@ def validate_signature(sock):
     merchant_signature = int.from_bytes(merchant_signature, 'big')
     merchant_hash = pow(merchant_signature, merchant_public_key.e, merchant_public_key.n)
     customer_hash = int.from_bytes(sha512(sid).digest(), 'big')
-    print('Signature valid: ', customer_hash == merchant_hash)
+    print('Merchant signature valid: ', customer_hash == merchant_hash)
 
     return sid, customer_hash == merchant_hash
+
+
+def validate_pg_signature(signature, resp, sid, info):
+    pg_public_key = import_pg_key().publickey()
+
+    pg_signature = int.from_bytes(signature, 'big')
+    pg_hash = pow(pg_signature, pg_public_key.e, pg_public_key.n)
+    customer_payload = bytes(resp) + sid + bytes(info.amount) + bytes(info.nonce)
+    customer_hash = int.from_bytes(sha512(customer_payload).digest(), 'big')
+    print('PG signature valid: ', customer_hash == pg_hash)
+
+    return customer_hash == pg_hash
 
 
 if __name__ == '__main__':
@@ -78,6 +94,7 @@ if __name__ == '__main__':
     public_key = keys.publickey().export_key()
 
     # ========== SET-UP SUB-PROTOCOL ==========
+    print('[Starting set-up sub-protocol...]')
 
     public_key = pad(public_key)
     enc_pk = AES.new(sk, AES.MODE_ECB).encrypt(public_key)
@@ -92,14 +109,16 @@ if __name__ == '__main__':
     socket.send(len(rsa_enc_sk).to_bytes(2, 'big'))
     socket.send(rsa_enc_sk)
 
-    sid, is_signature_valid = validate_signature(socket)
+    sid, is_merchant_valid = validate_merchant_signature(socket)
 
     # =========================================
 
-    if is_signature_valid:
-        print('Exchange sub-protocol...')
+    if is_merchant_valid:
+        print('[Starting exchange sub-protocol...]')
+
+        # Phase 3
         pi = PaymentInfo(sid, public_key)
-        pg_public_key = import_pg_key().public_key()
+        pg_public_key = import_pg_key().publickey()
         serialized_pi = pickle.dumps(pi)
 
         signed_pi = pow(hash(pi), keys.d, keys.n)
@@ -128,6 +147,35 @@ if __name__ == '__main__':
         socket.send(len(m_rsa_enc_sk).to_bytes(2, 'big'))
         socket.send(m_rsa_enc_sk)
 
+        # Phase 6
+        enc_response_size = socket.recv(2)
+        enc_response_size = int.from_bytes(enc_response_size, 'big')
+        enc_response = socket.recv(enc_response_size)
 
+        enc_sid_size = socket.recv(2)
+        enc_sid_size = int.from_bytes(enc_sid_size, 'big')
+        enc_sid = socket.recv(enc_sid_size)
+
+        enc_signed_payload_size = socket.recv(2)
+        enc_signed_payload_size = int.from_bytes(enc_signed_payload_size, 'big')
+        enc_signed_payload = socket.recv(enc_signed_payload_size)
+
+        enc_sk_size = socket.recv(2)
+        enc_sk_size = int.from_bytes(enc_sk_size, 'big')
+        enc_sk = socket.recv(enc_sk_size)
+        sk = PKCS1_OAEP.new(keys).decrypt(enc_sk)
+
+        # validating pg signature
+        response = AES.new(sk, AES.MODE_ECB).decrypt(enc_response)
+        response = unpad(response)
+        response = int.from_bytes(response, 'big')
+        sid = AES.new(sk, AES.MODE_ECB).decrypt(enc_sid)
+        signed_payload = AES.new(sk, AES.MODE_ECB).decrypt(enc_signed_payload)
+
+        is_pg_valid = validate_pg_signature(signed_payload, response, sid, pi)
+        if is_pg_valid:
+            print('Response from payment gateway: ', response)
+        else:
+            print('Invalid payment gateway signature!')
     else:
-        print('Invalid signature!')
+        print('Invalid merchant signature!')

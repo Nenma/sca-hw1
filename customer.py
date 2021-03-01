@@ -119,7 +119,6 @@ if __name__ == '__main__':
 
         socket.send(len(enc_po).to_bytes(2, 'big'))
         socket.send(enc_po)
-
         socket.send(len(d_enc_pi).to_bytes(2, 'big'))
         socket.send(d_enc_pi)
 

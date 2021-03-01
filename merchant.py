@@ -24,22 +24,33 @@ def import_own_key():
     return key
 
 
+def import_pg_key():
+    encoded_key = open('rsa/payment_gateway_rsa.bin', 'rb').read()
+    key = RSA.import_key(encoded_key, passphrase=secret_code)
+    return key
+
+
+def establish_connection():
+    pg_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    pg_server_address = ('localhost', 2558)
+    pg_sock.connect(pg_server_address)
+    return pg_sock
+
+
 if __name__ == '__main__':
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_address = ('localhost', 2557)
     sock.bind(server_address)
     print(f'Server started at port 2557, listening...')
-    sock.listen(1)
 
-    customer_pk = b''
-    sk = b''
+    sock.listen(1)
 
     # print(uuid.uuid4())
 
     while True:
         conn, addr = sock.accept()
         try:
-
+            # ========== SET-UP SUB-PROTOCOL ==========
             cpk_size = conn.recv(2)
             cpk_size = int.from_bytes(cpk_size, 'big')
             enc_customer_pk = conn.recv(cpk_size)
@@ -78,6 +89,7 @@ if __name__ == '__main__':
             conn.send(rsa_enc_sk)
 
             # ========== EXCHANGE SUB-PROTOCOL ==========
+            # Phase 3
             enc_po_size = conn.recv(2)
             enc_po_size = int.from_bytes(enc_po_size, 'big')
             enc_po = conn.recv(enc_po_size)
@@ -93,6 +105,35 @@ if __name__ == '__main__':
             m_rsa_enc_sk_size = conn.recv(2)
             m_rsa_enc_sk_size = int.from_bytes(m_rsa_enc_sk_size, 'big')
             m_rsa_enc_sk = conn.recv(m_rsa_enc_sk_size)
+
+            sk = PKCS1_OAEP.new(own_key).decrypt(m_rsa_enc_sk)
+
+            po = AES.new(sk, AES.MODE_ECB).decrypt(enc_po)
+            po = pickle.loads(unpad(po))
+            print(po.amount)
+
+            payload = sid + customer_pk + bytes(po.amount)
+            hashed_payload = int.from_bytes(sha512(payload).digest(), 'big')
+            signed_payload = pow(hashed_payload, own_key.d, own_key.n)
+            enc_signed_payload = AES.new(sk, AES.MODE_ECB).encrypt(signed_payload.to_bytes(128, 'big'))
+
+            pg_public_key = import_pg_key().public_key()
+            enc_sk = PKCS1_OAEP.new(pg_public_key).encrypt(sk)
+
+            pg_sock = establish_connection()
+
+            # Phase 4
+            pg_sock.send(d_enc_pi_size.to_bytes(2, 'big'))
+            pg_sock.send(d_enc_pi)
+
+            pg_sock.send(d_enc_signed_pi_size.to_bytes(2, 'big'))
+            pg_sock.send(d_enc_signed_pi)
+
+            pg_sock.send(len(enc_signed_payload).to_bytes(2, 'big'))
+            pg_sock.send(enc_signed_payload)
+
+            pg_sock.send(len(enc_sk).to_bytes(2, 'big'))
+            pg_sock.send(enc_sk)
 
             # =========================================
         finally:

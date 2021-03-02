@@ -1,5 +1,6 @@
 import socket
 import pickle
+import time
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
 from Crypto.Cipher import AES
@@ -9,6 +10,7 @@ from model.payment_order import PaymentOrder
 
 sk = b'crypto = awesome'
 secret_code = 'sca = awesome'
+timeout = 5
 
 
 def generate_session_key():
@@ -114,6 +116,7 @@ if __name__ == '__main__':
     # =========================================
 
     if is_merchant_valid:
+        start = time.perf_counter()
         print('[Starting exchange sub-protocol...]')
 
         # Phase 3
@@ -165,17 +168,22 @@ if __name__ == '__main__':
         enc_sk = socket.recv(enc_sk_size)
         sk = PKCS1_OAEP.new(keys).decrypt(enc_sk)
 
-        # validating pg signature
-        response = AES.new(sk, AES.MODE_ECB).decrypt(enc_response)
-        response = unpad(response)
-        response = int.from_bytes(response, 'big')
-        sid = AES.new(sk, AES.MODE_ECB).decrypt(enc_sid)
-        signed_payload = AES.new(sk, AES.MODE_ECB).decrypt(enc_signed_payload)
+        finish = time.perf_counter()
 
-        is_pg_valid = validate_pg_signature(signed_payload, response, sid, pi)
-        if is_pg_valid:
-            print('Response from payment gateway: ', response)
+        if finish - start < timeout:
+            # validating pg signature
+            response = AES.new(sk, AES.MODE_ECB).decrypt(enc_response)
+            response = unpad(response)
+            response = int.from_bytes(response, 'big')
+            sid = AES.new(sk, AES.MODE_ECB).decrypt(enc_sid)
+            signed_payload = AES.new(sk, AES.MODE_ECB).decrypt(enc_signed_payload)
+
+            is_pg_valid = validate_pg_signature(signed_payload, response, sid, pi)
+            if is_pg_valid:
+                print('Response from payment gateway: ', response)
+            else:
+                print('Invalid payment gateway signature!')
         else:
-            print('Invalid payment gateway signature!')
+            print('Response timeout!')
     else:
         print('Invalid merchant signature!')
